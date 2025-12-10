@@ -1,89 +1,66 @@
 package com.jejulog.controller;
 
-import com.jejulog.domain.PhotoSession;
-import com.jejulog.domain.SessionImage;
-import com.jejulog.repository.PhotoSessionRepository;
-import com.jejulog.repository.SessionImageRepository;
+import com.jejulog.domain.JejuBranch;
+import com.jejulog.service.PhotoService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
-import org.springframework.http.MediaType;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/sessions")
+@RequestMapping("/api/v1/photos")
 @RequiredArgsConstructor
-public class SessionController {
+public class PhotoController {
 
-    private final PhotoSessionRepository sessionRepository;
-    private final SessionImageRepository imageRepository;
+    private final PhotoService photoService;
 
-    // 프로젝트 폴더 안에 images 폴더 생성
-    private final String UPLOAD_ROOT = System.getProperty("user.dir") + "/images/";
+    // 이미지를 실제로 저장할 로컬 경로 (Config의 경로와 일치시켜야 함)
+    // 주의: 폴더가 실제로 존재해야 에러가 안 납니다. 미리 만들어두세요.
+    private final String LOCAL_STORAGE_PATH = "C:/jeju-images/";
 
-    // 1. 시작 (UUID 발급)
-    @PostMapping
-    public ResponseEntity<?> start() {
-        PhotoSession session = new PhotoSession(null);
-        sessionRepository.save(session);
-        return ResponseEntity.ok(Map.of("status", 200, "uuid", session.getUuid()));
-    }
+    @PostMapping("/upload")
+    public ResponseEntity<String> uploadPhotos(
+            @RequestParam("files") List<MultipartFile> files, // 이미지 파일들
+            @RequestParam("phoneNumber") String phoneNumber,  // 전화번호
+            @RequestParam("branch") JejuBranch branch         // 지점명 (AEWOL, HAMDEOK 등)
+    ) {
+        // 1. 이미지를 로컬에 저장하고 경로 리스트 만들기
+        List<String> filePaths = new ArrayList<>();
 
-    // 2. 10장 업로드
-    @PostMapping(value = "/{uuid}/photos", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> uploadPhoto(@PathVariable String uuid,
-                                         @RequestParam("file") MultipartFile file,
-                                         @RequestParam("sequence") int sequence) {
-        try {
-            // 폴더 없으면 생성
-            String saveDir = UPLOAD_ROOT + uuid + "/raw/";
-            new File(saveDir).mkdirs();
+        for (MultipartFile file : files) {
+            if (file.isEmpty()) continue;
 
-            // 파일 저장
-            String fileName = sequence + ".png";
-            file.transferTo(new File(saveDir + fileName));
+            // 파일명 중복 방지를 위해 UUID 사용 (예: uuid_originalName.jpg)
+            String originalFilename = file.getOriginalFilename();
+            String storeFileName = UUID.randomUUID() + "_" + originalFilename;
+            String fullPath = LOCAL_STORAGE_PATH + storeFileName;
 
-            // DB 저장
-            PhotoSession session = sessionRepository.findByUuid(uuid).orElseThrow();
-            String accessUrl = "/images/" + uuid + "/raw/" + fileName;
+            try {
+                // 실제 디스크에 파일 저장
+                file.transferTo(new File(fullPath));
 
-            imageRepository.save(SessionImage.builder()
-                    .photoSession(session).filePath(accessUrl).sequence(sequence).build());
+                // DB에 저장할 접근 URL 경로 (WebConfig 설정과 매칭됨)
+                // 예: /images/uuid_파일명.jpg
+                filePaths.add("/images/" + storeFileName);
 
-            return ResponseEntity.ok(Map.of("status", 200, "message", "저장 성공"));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body("실패");
+            } catch (IOException e) {
+                log.error("파일 저장 실패", e);
+                return ResponseEntity.internalServerError().body("이미지 저장 중 오류가 발생했습니다.");
+            }
         }
-    }
 
-    // 3. 최종 저장 (이미지 + 번호 + AI글)
-    @PostMapping(value = "/{uuid}/complete", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> complete(@PathVariable String uuid,
-                                      @RequestParam("finalImage") MultipartFile finalImage,
-                                      @RequestParam("phoneNumber") String phoneNumber,
-                                      @RequestParam("aiText") String aiText) {
-        try {
-            String saveDir = UPLOAD_ROOT + uuid + "/result/";
-            new File(saveDir).mkdirs();
+        // 2. 서비스 호출 (DB 저장 및 스탬프 색상 계산)
+        String stampColor = photoService.saveSessionAndGetStamp(phoneNumber, branch, filePaths);
 
-            String fileName = "final.png";
-            finalImage.transferTo(new File(saveDir + fileName));
-
-            PhotoSession session = sessionRepository.findByUuid(uuid).orElseThrow();
-            String accessUrl = "/images/" + uuid + "/result/" + fileName;
-
-            session.complete(phoneNumber, accessUrl, aiText);
-            sessionRepository.save(session);
-
-            // 프론트엔드에게 QR용 URL 전달
-            return ResponseEntity.ok(Map.of("status", 200, "qrUrl", accessUrl));
-        } catch (Exception e) {
-            return ResponseEntity.status(500).body("실패");
-        }
+        // 3. 결과 응답 (이번 방문의 스탬프 색상 반환)
+        return ResponseEntity.ok(stampColor);
     }
 }

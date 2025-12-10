@@ -1,39 +1,39 @@
 package com.jejulog.domain;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.AccessLevel;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
-import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "photo_session")
 public class PhotoSession {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
-    private String uuid; // 세션 ID
+    private LocalDateTime createdAt; // 촬영 일시
 
-    private String phoneNumber;
-    private String finalImagePath; // 최종 결과물 경로
+    @Enumerated(EnumType.STRING)
+    private JejuBranch branch; // 방문 지점
 
-    @Column(columnDefinition = "TEXT")
-    private String aiText; // AI 감성글
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "visitor_id")
+    private Visitor visitor; // 방문자 연결
 
-    private LocalDateTime createdAt;
+    // 이 세션에서 찍은 사진들 (10장 제한은 로직에서 처리)
+    @OneToMany(mappedBy = "photoSession", cascade = CascadeType.ALL)
+    private List<SessionImage> images = new ArrayList<>();
 
     @Builder
-    public PhotoSession(String uuid) {
-        this.uuid = UUID.randomUUID().toString();
+    public PhotoSession(Visitor visitor, JejuBranch branch) {
+        this.visitor = visitor;
+        this.branch = branch;
         this.createdAt = LocalDateTime.now();
-    }
-
-    public void complete(String phoneNumber, String finalImagePath, String aiText) {
-        this.phoneNumber = phoneNumber;
-        this.finalImagePath = finalImagePath;
-        this.aiText = aiText;
     }
 }
