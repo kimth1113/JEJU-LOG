@@ -1,4 +1,4 @@
 package com.jejulog.repository;
 
-public interface as {
+public interface repository {
 }
